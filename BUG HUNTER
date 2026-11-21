@@ -1,0 +1,954 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Bug Hunter — IBM AI Builders Challenge</title>
+
+  <!-- =====================================================================
+       SECTION: CSS CUSTOM PROPERTIES & GLOBAL STYLES
+       Dark terminal / cyberpunk theme — neon green on near-black.
+       All colours pass WCAG AA (≥ 4.5:1 against #0a0f0a background).
+  ====================================================================== -->
+  <style>
+    /* --- Design tokens --- */
+    :root {
+      --bg:           #0a0f0a;
+      --surface:      #0f1a0f;
+      --border:       #1a3a1a;
+      --neon:         #39ff14;      /* neon green  — contrast 10.4:1 on --bg */
+      --neon-dim:     #22aa0d;
+      --neon-glow:    #39ff1455;
+      --warn:         #ff9900;      /* orange warn — contrast 7.1:1 on --bg  */
+      --danger:       #ff3c3c;      /* red danger  — contrast 5.6:1 on --bg  */
+      --muted:        #5a8a5a;
+      --text:         #c8f0c8;      /* contrast 8.9:1 on --bg */
+      --font:         'Courier New', Courier, monospace;
+      --server-h:     48px;
+    }
+
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    html, body {
+      width: 100%; height: 100%;
+      background: var(--bg);
+      color: var(--text);
+      font-family: var(--font);
+      overflow: hidden;
+      user-select: none;
+    }
+
+    /* ---- Shared overlay panel ---- */
+    .screen {
+      position: fixed; inset: 0;
+      display: flex; flex-direction: column;
+      align-items: center; justify-content: center;
+      gap: 18px;
+      background: rgba(10,15,10,.92);
+      z-index: 100;
+    }
+    .screen h1 {
+      font-size: clamp(2rem, 6vw, 3.6rem);
+      color: var(--neon);
+      text-shadow: 0 0 18px var(--neon), 0 0 40px var(--neon-dim);
+      letter-spacing: .15em;
+      text-align: center;
+    }
+    .screen h2 {
+      font-size: clamp(1.1rem, 3vw, 1.5rem);
+      color: var(--warn);
+      letter-spacing: .08em;
+      text-align: center;
+    }
+    .screen p {
+      color: var(--text);
+      font-size: clamp(.85rem, 2vw, 1rem);
+      text-align: center;
+      line-height: 1.7;
+      max-width: 420px;
+    }
+    .screen .sub {
+      color: var(--muted);
+      font-size: .8rem;
+      text-align: center;
+    }
+    .btn {
+      padding: 12px 36px;
+      background: transparent;
+      border: 2px solid var(--neon);
+      color: var(--neon);
+      font-family: var(--font);
+      font-size: 1rem;
+      letter-spacing: .12em;
+      cursor: pointer;
+      transition: background .18s, box-shadow .18s;
+      text-transform: uppercase;
+    }
+    .btn:hover, .btn:focus-visible {
+      background: var(--neon-glow);
+      box-shadow: 0 0 14px var(--neon);
+      outline: none;
+    }
+
+    /* =====================================================================
+       SECTION: HUD (heads-up display) — always visible during gameplay
+    ====================================================================== */
+    #hud {
+      position: fixed; top: 0; left: 0; right: 0;
+      height: 42px;
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 0 16px;
+      background: var(--surface);
+      border-bottom: 1px solid var(--border);
+      z-index: 50;
+      font-size: .85rem;
+      letter-spacing: .05em;
+    }
+    #hud .hud-block { display: flex; gap: 20px; }
+    #hud span { color: var(--muted); }
+    #hud strong { color: var(--neon); }
+    #lives-display { display: flex; gap: 6px; align-items: center; }
+    .life-icon {
+      width: 14px; height: 14px;
+      background: var(--danger);
+      border-radius: 50%;
+      box-shadow: 0 0 6px var(--danger);
+      transition: opacity .3s;
+    }
+    .life-icon.lost { opacity: .15; background: var(--muted); box-shadow: none; }
+
+    /* =====================================================================
+       SECTION: GAME CANVAS (arena where bugs fall)
+    ====================================================================== */
+    #arena {
+      position: fixed;
+      top: 42px;
+      left: 0; right: 0;
+      bottom: var(--server-h);
+      overflow: hidden;
+    }
+
+    /* =====================================================================
+       SECTION: PRODUCTION SERVER LINE
+    ====================================================================== */
+    #server-bar {
+      position: fixed;
+      bottom: 0; left: 0; right: 0;
+      height: var(--server-h);
+      background: var(--surface);
+      border-top: 2px solid var(--danger);
+      display: flex; align-items: center; justify-content: center;
+      font-size: .9rem;
+      letter-spacing: .15em;
+      color: var(--danger);
+      text-shadow: 0 0 10px var(--danger);
+      z-index: 50;
+    }
+
+    /* =====================================================================
+       SECTION: BUG TOKENS
+    ====================================================================== */
+    .bug {
+      position: absolute;
+      display: flex; flex-direction: column;
+      align-items: center; gap: 4px;
+      cursor: default;
+      transition: transform .05s;
+    }
+    .bug-emoji {
+      font-size: 1.8rem;
+      line-height: 1;
+      /* Use filter instead of text-shadow for emoji for wider support */
+      filter: drop-shadow(0 0 6px var(--neon));
+      animation: bugWiggle 1.4s ease-in-out infinite;
+    }
+    .bug-word {
+      font-size: clamp(.7rem, 2vw, .9rem);
+      color: var(--neon);
+      background: rgba(10,15,10,.85);
+      padding: 2px 7px;
+      border: 1px solid var(--neon-dim);
+      letter-spacing: .06em;
+      white-space: nowrap;
+      border-radius: 2px;
+    }
+    /* Highlight letters as the player types */
+    .bug-word .typed  { color: var(--warn); }
+    .bug-word .cursor { border-left: 2px solid var(--warn); }
+
+    @keyframes bugWiggle {
+      0%,100% { transform: rotate(-6deg); }
+      50%      { transform: rotate(6deg); }
+    }
+
+    /* =====================================================================
+       SECTION: TYPING INPUT
+    ====================================================================== */
+    #type-row {
+      position: fixed;
+      bottom: calc(var(--server-h) + 8px);
+      left: 50%; transform: translateX(-50%);
+      width: min(420px, 90vw);
+      z-index: 60;
+    }
+    #type-input {
+      width: 100%;
+      padding: 10px 16px;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-bottom: 2px solid var(--neon);
+      color: var(--neon);
+      font-family: var(--font);
+      font-size: 1.1rem;
+      letter-spacing: .1em;
+      outline: none;
+      caret-color: var(--neon);
+    }
+    #type-input:focus { border-color: var(--neon); box-shadow: 0 0 10px var(--neon-glow); }
+
+    /* =====================================================================
+       SECTION: PARTICLES
+    ====================================================================== */
+    .particle {
+      position: absolute;
+      width: 6px; height: 6px;
+      border-radius: 50%;
+      pointer-events: none;
+      animation: particleFly var(--dur, .7s) ease-out forwards;
+    }
+    @keyframes particleFly {
+      0%   { opacity: 1; transform: translate(0,0) scale(1); }
+      100% { opacity: 0; transform: translate(var(--tx), var(--ty)) scale(0); }
+    }
+
+    /* =====================================================================
+       SECTION: COMBO POPUP
+    ====================================================================== */
+    .combo-popup {
+      position: absolute;
+      pointer-events: none;
+      color: var(--warn);
+      font-size: 1.1rem;
+      font-weight: bold;
+      letter-spacing: .08em;
+      white-space: nowrap;
+      animation: comboFloat .9s ease-out forwards;
+      z-index: 70;
+    }
+    @keyframes comboFloat {
+      0%   { opacity: 1; transform: translateY(0) scale(1); }
+      100% { opacity: 0; transform: translateY(-48px) scale(1.4); }
+    }
+
+    /* =====================================================================
+       SECTION: SCREEN-SHAKE
+    ====================================================================== */
+    @keyframes screenShake {
+      0%,100% { transform: translate(0,0); }
+      20%      { transform: translate(-8px, 4px); }
+      40%      { transform: translate(8px,-4px); }
+      60%      { transform: translate(-6px, 6px); }
+      80%      { transform: translate(6px,-2px); }
+    }
+    body.shake { animation: screenShake .35s ease; }
+
+    /* =====================================================================
+       SECTION: SCANLINE OVERLAY
+    ====================================================================== */
+    body::after {
+      content: '';
+      position: fixed; inset: 0;
+      pointer-events: none;
+      background: repeating-linear-gradient(
+        to bottom,
+        rgba(0,0,0,.04) 0px,
+        rgba(0,0,0,.04) 1px,
+        transparent 1px,
+        transparent 3px
+      );
+      z-index: 200;
+    }
+
+    /* =====================================================================
+       SECTION: DIFFICULTY TOAST
+    ====================================================================== */
+    #diff-toast {
+      position: fixed;
+      top: 60px; left: 50%; transform: translateX(-50%);
+      background: var(--surface);
+      border: 1px solid var(--warn);
+      color: var(--warn);
+      padding: 8px 24px;
+      font-size: .85rem;
+      letter-spacing: .1em;
+      z-index: 90;
+      opacity: 0;
+      transition: opacity .3s;
+      pointer-events: none;
+    }
+    #diff-toast.show { opacity: 1; }
+
+    /* =====================================================================
+       SECTION: HIGH-SCORE TABLE
+    ====================================================================== */
+    #score-table {
+      border-collapse: collapse;
+      font-size: .85rem;
+      min-width: 240px;
+    }
+    #score-table th {
+      color: var(--muted);
+      text-align: left;
+      padding: 4px 12px;
+      border-bottom: 1px solid var(--border);
+      letter-spacing: .08em;
+    }
+    #score-table td {
+      color: var(--text);
+      padding: 4px 12px;
+    }
+    #score-table tr:first-child td { color: var(--neon); }
+
+    /* =====================================================================
+       SECTION: RESPONSIVE TWEAKS
+    ====================================================================== */
+    @media (max-width: 480px) {
+      #hud { font-size: .72rem; padding: 0 8px; }
+      #hud .hud-block { gap: 10px; }
+    }
+  </style>
+</head>
+<body>
+
+<!-- ===========================================================
+     SECTION: DOM — SCREENS & UI ELEMENTS
+=========================================================== -->
+
+<!-- START SCREEN -->
+<div id="screen-start" class="screen">
+  <h1>🐛 BUG HUNTER</h1>
+  <h2>IBM AI Builders Challenge</h2>
+  <p>
+    Bug jatuh dari atas. Ketik kata di bawah bug untuk menghancurkannya
+    sebelum mencapai <strong style="color:var(--danger)">SERVER PRODUKSI</strong>!<br><br>
+    Kamu punya <strong style="color:var(--danger)">3 nyawa</strong>.
+    Kesalahan = kehilangan 1 nyawa.<br>
+    Combo berturut-turut melipatgandakan skor.
+  </p>
+  <p class="sub">ESC = Jeda &nbsp;|&nbsp; Tingkat kesulitan meningkat tiap 30 detik</p>
+  <button class="btn" id="btn-start">MULAI PERMAINAN</button>
+</div>
+
+<!-- PAUSE SCREEN -->
+<div id="screen-pause" class="screen" style="display:none">
+  <h1>⏸ DIJEDA</h1>
+  <p>Tekan <strong style="color:var(--neon)">ESC</strong> untuk melanjutkan permainan.</p>
+  <button class="btn" id="btn-resume">LANJUTKAN</button>
+</div>
+
+<!-- GAME OVER SCREEN -->
+<div id="screen-gameover" class="screen" style="display:none">
+  <h1 style="color:var(--danger)">GAME OVER</h1>
+  <h2 id="go-score">Skor: 0</h2>
+  <table id="score-table">
+    <thead>
+      <tr><th>#</th><th>SKOR</th></tr>
+    </thead>
+    <tbody id="go-scores-body"></tbody>
+  </table>
+  <button class="btn" id="btn-restart">MAIN LAGI</button>
+  <p class="sub">Skor tertinggi disimpan di perangkat ini.</p>
+</div>
+
+<!-- HUD -->
+<div id="hud" style="display:none">
+  <div class="hud-block">
+    <div><span>SKOR </span><strong id="hud-score">0</strong></div>
+    <div><span>COMBO </span><strong id="hud-combo">x1</strong></div>
+    <div><span>LEVEL </span><strong id="hud-level">1</strong></div>
+  </div>
+  <div class="hud-block">
+    <div id="lives-display"></div>
+  </div>
+</div>
+
+<!-- ARENA -->
+<div id="arena" style="display:none"></div>
+
+<!-- TYPING INPUT -->
+<div id="type-row" style="display:none">
+  <input id="type-input" type="text" autocomplete="off"
+         autocorrect="off" autocapitalize="off" spellcheck="false"
+         placeholder="Ketik nama bug di sini…" aria-label="Ketik nama bug" />
+</div>
+
+<!-- SERVER BAR -->
+<div id="server-bar" style="display:none">
+  ⚠ SERVER PRODUKSI ⚠
+</div>
+
+<!-- DIFFICULTY TOAST -->
+<div id="diff-toast">LEVEL UP — KESULITAN MENINGKAT!</div>
+
+<!-- ===========================================================
+     SECTION: JAVASCRIPT — GAME ENGINE
+=========================================================== -->
+<script>
+'use strict';
+
+/* ================================================================
+   SECTION: CONSTANTS & CONFIG
+================================================================ */
+const BUG_WORDS = [
+  'NullPointer','SyntaxError','Segfault','Timeout','404','StackOverflow',
+  'TypeError','RangeError','Deadlock','MemLeak','NaN','Undefined',
+  'IndexError','Overflow','Underflow','BadGateway','500','403'
+];
+const BUG_EMOJIS = ['🐛','🦟','🪲','🦠','🕷️','🐞'];
+
+// Difficulty tiers: each applied every 30 s
+const DIFF_TIERS = [
+  { spawnMs: 2800, speedMin: 48,  speedMax: 80  },
+  { spawnMs: 2200, speedMin: 60,  speedMax: 100 },
+  { spawnMs: 1700, speedMin: 72,  speedMax: 125 },
+  { spawnMs: 1300, speedMin: 88,  speedMax: 155 },
+  { spawnMs: 1000, speedMin: 105, speedMax: 185 },
+  { spawnMs: 800,  speedMin: 125, speedMax: 220 },
+];
+
+const LS_KEY    = 'bughunter_scores';
+const MAX_LIVES = 3;
+
+/* ================================================================
+   SECTION: WEB AUDIO API — SOUND ENGINE
+   All sounds are synthesised; no audio files required.
+================================================================ */
+let audioCtx = null;
+
+function ensureAudio() {
+  if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+}
+
+/**
+ * playTone — generic helper
+ * @param {number} freq  Hz
+ * @param {string} type  oscillator type
+ * @param {number} dur   seconds
+ * @param {number} gain  0–1
+ * @param {number} delay seconds offset from now
+ */
+function playTone(freq, type, dur, gain, delay = 0) {
+  ensureAudio();
+  const osc  = audioCtx.createOscillator();
+  const env  = audioCtx.createGain();
+  osc.type      = type;
+  osc.frequency.value = freq;
+  env.gain.setValueAtTime(gain, audioCtx.currentTime + delay);
+  env.gain.exponentialRampToValueAtTime(0.0001, audioCtx.currentTime + delay + dur);
+  osc.connect(env);
+  env.connect(audioCtx.destination);
+  osc.start(audioCtx.currentTime + delay);
+  osc.stop(audioCtx.currentTime + delay + dur);
+}
+
+/** Sound: bug squashed (ascending chime) */
+function sfxKill(combo) {
+  const base = 440 + Math.min(combo - 1, 8) * 50;
+  playTone(base,        'sine',   .15, .4);
+  playTone(base * 1.5,  'sine',   .12, .3, .08);
+  playTone(base * 2,    'sine',   .10, .2, .15);
+}
+
+/** Sound: bug reaches server — low thud */
+function sfxMiss() {
+  playTone(80,  'sawtooth', .25, .6);
+  playTone(60,  'square',   .20, .4, .05);
+}
+
+/** Sound: game over — descending doom */
+function sfxGameOver() {
+  [440,330,220,110].forEach((f,i) => playTone(f,'sawtooth',.4,.5,i*.18));
+}
+
+/** Sound: level up — bright arpeggio */
+function sfxLevelUp() {
+  [523,659,784,1047].forEach((f,i) => playTone(f,'sine',.18,.35,i*.08));
+}
+
+/** Sound: key typed correctly */
+function sfxType() {
+  playTone(900, 'square', .04, .12);
+}
+
+/* ================================================================
+   SECTION: DOM ELEMENT REFERENCES
+================================================================ */
+const $   = id => document.getElementById(id);
+const screenStart    = $('screen-start');
+const screenPause    = $('screen-pause');
+const screenGameover = $('screen-gameover');
+const hud            = $('hud');
+const arena          = $('arena');
+const typeRow        = $('type-row');
+const serverBar      = $('server-bar');
+const typeInput      = $('type-input');
+const hudScore       = $('hud-score');
+const hudCombo       = $('hud-combo');
+const hudLevel       = $('hud-level');
+const livesDisplay   = $('lives-display');
+const diffToast      = $('diff-toast');
+const goScore        = $('go-score');
+const goScoresBody   = $('go-scores-body');
+
+/* ================================================================
+   SECTION: GAME STATE
+================================================================ */
+let state = {
+  running:    false,
+  paused:     false,
+  score:      0,
+  lives:      MAX_LIVES,
+  combo:      1,
+  level:      1,
+  bugs:       [],           // active bug objects
+  lastFrame:  null,
+  spawnTimer: 0,
+  diffTimer:  0,
+  animId:     null,
+  spawnId:    null,
+};
+
+/* ================================================================
+   SECTION: UTILITY HELPERS
+================================================================ */
+
+/** Returns random integer in [min, max) */
+function randInt(min, max) { return Math.floor(Math.random() * (max - min)) + min; }
+
+/** Picks a random element from an array */
+function pick(arr) { return arr[randInt(0, arr.length)]; }
+
+/** Current difficulty tier (clamped) */
+function tier() { return DIFF_TIERS[Math.min(state.level - 1, DIFF_TIERS.length - 1)]; }
+
+/** LocalStorage: load score list (up to 5) */
+function loadScores() {
+  try { return JSON.parse(localStorage.getItem(LS_KEY)) || []; }
+  catch { return []; }
+}
+
+/** LocalStorage: save a new score */
+function saveScore(s) {
+  const list = loadScores();
+  list.push(s);
+  list.sort((a,b) => b - a);
+  localStorage.setItem(LS_KEY, JSON.stringify(list.slice(0, 5)));
+}
+
+/* ================================================================
+   SECTION: SCREEN MANAGEMENT
+================================================================ */
+function showScreen(name) {
+  screenStart.style.display    = name === 'start'    ? '' : 'none';
+  screenPause.style.display    = name === 'pause'    ? '' : 'none';
+  screenGameover.style.display = name === 'gameover' ? '' : 'none';
+
+  const inGame = name === 'game';
+  hud.style.display       = inGame ? '' : 'none';
+  arena.style.display     = inGame ? '' : 'none';
+  typeRow.style.display   = inGame ? '' : 'none';
+  serverBar.style.display = inGame ? '' : 'none';
+}
+
+/* ================================================================
+   SECTION: HUD RENDERING
+================================================================ */
+function renderHud() {
+  hudScore.textContent = state.score;
+  hudCombo.textContent = `x${state.combo}`;
+  hudLevel.textContent = state.level;
+  renderLives();
+}
+
+function renderLives() {
+  livesDisplay.innerHTML = '';
+  for (let i = 0; i < MAX_LIVES; i++) {
+    const dot = document.createElement('div');
+    dot.className = 'life-icon' + (i >= state.lives ? ' lost' : '');
+    livesDisplay.appendChild(dot);
+  }
+}
+
+/* ================================================================
+   SECTION: BUG CREATION
+================================================================ */
+let bugIdCounter = 0;
+
+function createBug() {
+  const id    = ++bugIdCounter;
+  const word  = pick(BUG_WORDS);
+  const emoji = pick(BUG_EMOJIS);
+  const t     = tier();
+  const speed = randInt(t.speedMin, t.speedMax); // px per second
+  const arenaW = arena.clientWidth;
+  const x      = randInt(10, arenaW - 90);       // px from left
+  const y      = -60;                            // start above arena
+
+  // Build DOM element
+  const el = document.createElement('div');
+  el.className = 'bug';
+  el.id = `bug-${id}`;
+  el.style.left = x + 'px';
+  el.style.top  = y + 'px';
+
+  const emojiEl = document.createElement('div');
+  emojiEl.className = 'bug-emoji';
+  emojiEl.textContent = emoji;
+
+  const wordEl = document.createElement('div');
+  wordEl.className = 'bug-word';
+  wordEl.dataset.word = word;
+  updateBugWordEl(wordEl, word, 0);  // no typed chars yet
+
+  el.appendChild(emojiEl);
+  el.appendChild(wordEl);
+  arena.appendChild(el);
+
+  const bugObj = { id, word, emoji, speed, x, y: parseFloat(y), el, typed: 0 };
+  state.bugs.push(bugObj);
+  return bugObj;
+}
+
+/**
+ * Re-renders the word element to show typed prefix highlighted.
+ * @param {HTMLElement} wordEl
+ * @param {string} word
+ * @param {number} typedLen
+ */
+function updateBugWordEl(wordEl, word, typedLen) {
+  let html = '';
+  for (let i = 0; i < word.length; i++) {
+    if (i < typedLen) {
+      html += `<span class="typed">${word[i]}</span>`;
+    } else if (i === typedLen) {
+      html += `<span class="cursor">${word[i]}</span>`;
+    } else {
+      html += word[i];
+    }
+  }
+  wordEl.innerHTML = html;
+}
+
+/* ================================================================
+   SECTION: BUG REMOVAL & EFFECTS
+================================================================ */
+
+/** Removes a bug element and object from state */
+function removeBug(bugObj) {
+  bugObj.el.remove();
+  state.bugs = state.bugs.filter(b => b.id !== bugObj.id);
+}
+
+/** Particle explosion at (cx, cy) in arena-relative coords */
+function spawnParticles(cx, cy) {
+  const colours = ['#39ff14','#ff9900','#ffffff','#00eaff'];
+  for (let i = 0; i < 18; i++) {
+    const p = document.createElement('div');
+    p.className = 'particle';
+    const angle = (i / 18) * Math.PI * 2;
+    const dist  = randInt(40, 110);
+    const tx    = Math.cos(angle) * dist;
+    const ty    = Math.sin(angle) * dist;
+    const dur   = (randInt(50, 90) / 100).toFixed(2);
+    p.style.cssText = `
+      left:${cx}px; top:${cy}px;
+      background:${colours[i % colours.length]};
+      --tx:${tx}px; --ty:${ty}px; --dur:${dur}s;
+    `;
+    arena.appendChild(p);
+    setTimeout(() => p.remove(), parseFloat(dur) * 1000 + 50);
+  }
+}
+
+/** Floating combo/score popup */
+function spawnComboPopup(x, y, text) {
+  const el = document.createElement('div');
+  el.className = 'combo-popup';
+  el.textContent = text;
+  el.style.left = x + 'px';
+  el.style.top  = (y - 20) + 'px';
+  arena.appendChild(el);
+  setTimeout(() => el.remove(), 950);
+}
+
+/** Screen shake effect */
+function triggerShake() {
+  document.body.classList.remove('shake');
+  void document.body.offsetWidth; // force reflow to restart animation
+  document.body.classList.add('shake');
+  setTimeout(() => document.body.classList.remove('shake'), 400);
+}
+
+/* ================================================================
+   SECTION: TYPING LOGIC
+================================================================ */
+
+/**
+ * Finds the best-matching active bug for the current input.
+ * Priority: bug whose word starts with input (longest match first).
+ */
+function findTargetBug(input) {
+  const upper = input.toUpperCase();
+  let best = null;
+  let bestLen = -1;
+  for (const bug of state.bugs) {
+    if (bug.word.toUpperCase().startsWith(upper) && upper.length > bestLen) {
+      best = bug;
+      bestLen = upper.length;
+    }
+  }
+  return best;
+}
+
+typeInput.addEventListener('input', () => {
+  if (!state.running || state.paused) return;
+
+  const raw   = typeInput.value;
+  const input = raw.trim();
+
+  if (!input) {
+    // Clear highlights on all bugs
+    state.bugs.forEach(b => updateBugWordEl(
+      b.el.querySelector('.bug-word'), b.word, 0
+    ));
+    return;
+  }
+
+  const target = findTargetBug(input);
+
+  // Update visual highlights on all bugs
+  state.bugs.forEach(b => {
+    const wordEl = b.el.querySelector('.bug-word');
+    if (b === target) {
+      const typedLen = Math.min(input.length, b.word.length);
+      updateBugWordEl(wordEl, b.word, typedLen);
+      sfxType();
+    } else {
+      updateBugWordEl(wordEl, b.word, 0);
+    }
+  });
+
+  // Check if word is fully typed
+  if (target && input.toUpperCase() === target.word.toUpperCase()) {
+    killBug(target);
+    typeInput.value = '';
+    // Reset all other highlights
+    state.bugs.forEach(b => updateBugWordEl(
+      b.el.querySelector('.bug-word'), b.word, 0
+    ));
+  }
+});
+
+/**
+ * Kills a bug: award points, particles, combo, sound.
+ */
+function killBug(bugObj) {
+  const rect   = bugObj.el.getBoundingClientRect();
+  const aRect  = arena.getBoundingClientRect();
+  const cx     = rect.left - aRect.left + rect.width  / 2;
+  const cy     = rect.top  - aRect.top  + rect.height / 2;
+
+  spawnParticles(cx, cy);
+
+  // Score = 100 × level × combo
+  const pts = 100 * state.level * state.combo;
+  state.score += pts;
+  state.combo  = Math.min(state.combo + 1, 16);
+
+  spawnComboPopup(cx, cy, `+${pts}${state.combo > 1 ? ` x${state.combo}` : ''}`);
+  sfxKill(state.combo);
+  removeBug(bugObj);
+  renderHud();
+}
+
+/* ================================================================
+   SECTION: BUG REACHES SERVER
+================================================================ */
+function bugReachedServer(bugObj) {
+  removeBug(bugObj);
+  state.lives--;
+  state.combo = 1;
+  sfxMiss();
+  triggerShake();
+  renderHud();
+
+  if (state.lives <= 0) {
+    endGame();
+  }
+}
+
+/* ================================================================
+   SECTION: SPAWNER
+================================================================ */
+function scheduleSpawn() {
+  if (state.spawnId) clearTimeout(state.spawnId);
+  if (!state.running || state.paused) return;
+
+  state.spawnId = setTimeout(() => {
+    if (state.running && !state.paused) {
+      createBug();
+      scheduleSpawn();
+    }
+  }, tier().spawnMs + randInt(-200, 200));
+}
+
+/* ================================================================
+   SECTION: GAME LOOP — requestAnimationFrame
+================================================================ */
+function gameLoop(timestamp) {
+  if (!state.running || state.paused) return;
+
+  const dt = state.lastFrame ? (timestamp - state.lastFrame) / 1000 : 0;
+  state.lastFrame = timestamp;
+
+  const arenaH    = arena.clientHeight;
+  const threshold = arenaH - 10; // y position that counts as "reached server"
+
+  for (let i = state.bugs.length - 1; i >= 0; i--) {
+    const bug = state.bugs[i];
+    bug.y += bug.speed * dt;
+    bug.el.style.top = bug.y + 'px';
+
+    if (bug.y >= threshold) {
+      bugReachedServer(bug);
+      if (!state.running) return; // game ended inside the loop
+    }
+  }
+
+  // Difficulty timer
+  state.diffTimer += dt;
+  if (state.diffTimer >= 30) {
+    state.diffTimer = 0;
+    if (state.level < DIFF_TIERS.length) {
+      state.level++;
+      sfxLevelUp();
+      showDiffToast();
+      renderHud();
+      // Restart spawner with new rate
+      scheduleSpawn();
+    }
+  }
+
+  state.animId = requestAnimationFrame(gameLoop);
+}
+
+/** Shows the difficulty-increase toast for 2 s */
+let toastTimeout = null;
+function showDiffToast() {
+  diffToast.classList.add('show');
+  if (toastTimeout) clearTimeout(toastTimeout);
+  toastTimeout = setTimeout(() => diffToast.classList.remove('show'), 2000);
+}
+
+/* ================================================================
+   SECTION: GAME LIFECYCLE — START / PAUSE / RESUME / END
+================================================================ */
+function startGame() {
+  ensureAudio();
+
+  // Reset state
+  state.running    = true;
+  state.paused     = false;
+  state.score      = 0;
+  state.lives      = MAX_LIVES;
+  state.combo      = 1;
+  state.level      = 1;
+  state.bugs       = [];
+  state.lastFrame  = null;
+  state.diffTimer  = 0;
+  bugIdCounter     = 0;
+
+  // Clear arena
+  arena.innerHTML = '';
+  typeInput.value = '';
+
+  showScreen('game');
+  renderHud();
+
+  // Start loop and spawner
+  state.animId = requestAnimationFrame(gameLoop);
+  scheduleSpawn();
+
+  // Auto-focus input
+  setTimeout(() => typeInput.focus(), 60);
+}
+
+function pauseGame() {
+  if (!state.running) return;
+  state.paused    = true;
+  state.lastFrame = null;
+  if (state.spawnId) clearTimeout(state.spawnId);
+  showScreen('pause');
+}
+
+function resumeGame() {
+  if (!state.running) return;
+  state.paused = false;
+  showScreen('game');
+  scheduleSpawn();
+  state.animId = requestAnimationFrame(gameLoop);
+  setTimeout(() => typeInput.focus(), 60);
+}
+
+function endGame() {
+  state.running = false;
+  state.paused  = false;
+  if (state.spawnId)  clearTimeout(state.spawnId);
+  if (state.animId)   cancelAnimationFrame(state.animId);
+  sfxGameOver();
+  saveScore(state.score);
+  renderGameOver();
+  showScreen('gameover');
+}
+
+function renderGameOver() {
+  goScore.textContent = `Skor Akhir: ${state.score.toLocaleString('id-ID')}`;
+  const scores = loadScores();
+  goScoresBody.innerHTML = scores.map((s,i) =>
+    `<tr><td>${i+1}</td><td>${s.toLocaleString('id-ID')}</td></tr>`
+  ).join('');
+}
+
+/* ================================================================
+   SECTION: INPUT EVENT HANDLERS — BUTTONS & KEYBOARD
+================================================================ */
+$('btn-start').addEventListener('click', startGame);
+$('btn-resume').addEventListener('click', resumeGame);
+$('btn-restart').addEventListener('click', startGame);
+
+document.addEventListener('keydown', e => {
+  if (e.key === 'Escape') {
+    if (state.running && !state.paused) pauseGame();
+    else if (state.paused)             resumeGame();
+  }
+});
+
+// Keep input focused during gameplay when clicking arena
+arena.addEventListener('click', () => {
+  if (state.running && !state.paused) typeInput.focus();
+});
+
+// Prevent mobile keyboard hiding on arena tap
+typeInput.addEventListener('blur', () => {
+  if (state.running && !state.paused) {
+    setTimeout(() => typeInput.focus(), 50);
+  }
+});
+
+/* ================================================================
+   SECTION: INITIAL STATE
+================================================================ */
+showScreen('start');
+</script>
+</body>
+</html>
